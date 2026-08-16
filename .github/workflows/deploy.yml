@@ -1,0 +1,197 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+
+# One deploy at a time per environment, and never cancelled mid-flight. A
+# cancelled deploy leaves an ECS service half rolled over.
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-central-1
+
+permissions:
+  contents: read
+  # OIDC federation instead of long-lived access keys. There are no AWS
+  # credentials stored in this repository.
+  id-token: write
+
+jobs:
+  build:
+    name: Build and push ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+
+    strategy:
+      fail-fast: true
+      matrix:
+        service: [timeline, ingest, sync, web]
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image tag
+        id: meta
+        # The commit SHA, never "latest". A mutable tag makes it impossible to
+        # say which code is serving a patient's chart right now.
+        run: echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          # The web image needs the workspace packages, so its context is the
+          # repository root. The services are self contained.
+          context: ${{ matrix.service == 'web' && '.' || format('services/{0}', matrix.service) }}
+          file: ${{ matrix.service == 'web' && 'apps/web/Dockerfile' || format('services/{0}/Dockerfile', matrix.service) }}
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/boensity/${{ matrix.service }}:${{ steps.meta.outputs.tag }}
+          build-args: |
+            NEXT_PUBLIC_TIMELINE_API_URL=${{ vars.NEXT_PUBLIC_TIMELINE_API_URL }}
+            NEXT_PUBLIC_INGEST_API_URL=${{ vars.NEXT_PUBLIC_INGEST_API_URL }}
+            NEXT_PUBLIC_SYNC_API_URL=${{ vars.NEXT_PUBLIC_SYNC_API_URL }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Scan image
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ steps.ecr.outputs.registry }}/boensity/${{ matrix.service }}:${{ steps.meta.outputs.tag }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+  migrate:
+    name: Database migrations
+    runs-on: ubuntu-latest
+    needs: build
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Apply migrations
+        # Run before the new tasks start, and written to be idempotent
+        # (CREATE ... IF NOT EXISTS throughout) so a re-run is safe.
+        run: |
+          aws ecs run-task \
+            --cluster boensity-${{ github.event.inputs.environment || 'staging' }} \
+            --task-definition boensity-${{ github.event.inputs.environment || 'staging' }}-timeline \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_IDS }}],securityGroups=[${{ secrets.SERVICE_SECURITY_GROUP_ID }}],assignPublicIp=DISABLED}" \
+            --overrides '{"containerOverrides":[{"name":"timeline","command":["python","-c","import asyncio,os,asyncpg,pathlib; sql=pathlib.Path(\"migrations/001_init_timescale.sql\").read_text(); asyncio.run(asyncpg.connect(dsn=os.environ[\"TIMESCALE_DSN\"].replace(\"+asyncpg\",\"\")).execute(sql))"]}]}' \
+            --region ${{ env.AWS_REGION }}
+
+  deploy:
+    name: Deploy ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    needs: [build, migrate]
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [timeline, ingest, sync]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Render task definition
+        id: render
+        run: |
+          ENV=${{ github.event.inputs.environment || 'staging' }}
+          aws ecs describe-task-definition \
+            --task-definition boensity-$ENV-${{ matrix.service }} \
+            --query taskDefinition > task-definition.json
+          echo "file=task-definition.json" >> "$GITHUB_OUTPUT"
+
+      - name: Update image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ steps.render.outputs.file }}
+          container-name: ${{ matrix.service }}
+          image: ${{ needs.build.outputs.image_tag && format('{0}.dkr.ecr.{1}.amazonaws.com/boensity/{2}:{3}', secrets.AWS_ACCOUNT_ID, env.AWS_REGION, matrix.service, needs.build.outputs.image_tag) }}
+
+      - name: Deploy
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ matrix.service }}
+          cluster: boensity-${{ github.event.inputs.environment || 'staging' }}
+          # Blocks until ECS reports the deployment stable. The circuit breaker
+          # in the service definition rolls back a failing rollout, and waiting
+          # here means the workflow reports that failure rather than a green
+          # tick over a rolled-back deploy.
+          wait-for-service-stability: true
+          wait-for-minutes: 10
+
+  verify:
+    name: Post-deploy health check
+    runs-on: ubuntu-latest
+    needs: deploy
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+
+    steps:
+      - name: Check every service reports healthy
+        run: |
+          BASE=${{ vars.PUBLIC_BASE_URL }}
+          for service in timeline ingest sync; do
+            echo "checking $service"
+            status=$(curl -s -o /tmp/body -w '%{http_code}' "$BASE/$service/health")
+            if [ "$status" != "200" ]; then
+              echo "::error::$service health check returned $status"
+              cat /tmp/body
+              exit 1
+            fi
+            cat /tmp/body
+          done
+
+      - name: Report degraded capabilities
+        # Not a failure. Running without Vision or a pharmacy feed is a
+        # supported state, but it should be visible in the deploy log rather
+        # than discovered by a clinician.
+        continue-on-error: true
+        run: |
+          BASE=${{ vars.PUBLIC_BASE_URL }}
+          curl -s "$BASE/ingest/health" | grep -q '"ocr_available": *true' \
+            || echo "::warning::OCR is not configured. Scanned PDFs will be rejected."
+          curl -s "$BASE/sync/health" | grep -q '"live_pharmacy_connection": *true' \
+            || echo "::warning::No live pharmacy connection. Sync is serving fixture data."

@@ -1,0 +1,48 @@
+# Agent tooling
+CLAUDE.md
+.claude/
+*.claude
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+dist/
+.next/
+.turbo/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Patient data. Nothing clinical ever reaches version control.
+*.pdf
+uploads/
+fixtures/real/
+
+# Terraform state holds resource identifiers and sometimes secrets
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Cloud credentials
+gcp-service-account.json
+*.pem
+
+# OS
+.DS_Store
+Thumbs.db

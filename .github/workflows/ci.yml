@@ -1,0 +1,196 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A new push supersedes an in-flight run on the same branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: '3.12'
+  NODE_VERSION: '22'
+
+jobs:
+  # The three services are independent, so they run as a matrix rather than in
+  # sequence. A failure in sync should not hide a failure in timeline.
+  services:
+    name: ${{ matrix.service }} service
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [timeline, ingest, sync]
+
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/${{ matrix.service }}/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Lint
+        run: ruff check app tests
+
+      - name: Format check
+        run: ruff format --check app tests
+
+      - name: Test
+        run: pytest tests -v
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+  # The demo fixtures are generated from the Timeline engine. If someone edits
+  # the model without regenerating them, the landing page silently shows stale
+  # numbers. This job catches that.
+  fixtures:
+    name: Demo fixtures are current
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install timeline and sync dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/timeline/requirements.txt
+          pip install -r services/sync/requirements.txt
+
+      - name: Regenerate fixtures
+        run: |
+          python scripts/generate_demo_fixtures.py
+          python scripts/generate_sync_fixtures.py
+
+      - name: Fail if they changed
+        run: |
+          if ! git diff --exit-code --stat apps/web/lib/demo-data.json apps/web/lib/demo-adherence.json; then
+            echo "::error::Demo fixtures are stale. Run the two scripts in scripts/ and commit the result."
+            exit 1
+          fi
+
+  infrastructure:
+    name: Terraform
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: infra/terraform
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.5
+
+      - name: Format
+        run: terraform fmt -check -recursive
+
+      - name: Validate
+        # No backend, because validation needs no state and no credentials.
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+  compose:
+    name: Docker compose
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate compose file
+        run: |
+          cp .env.example .env
+          docker compose -f infra/docker-compose.yml config > /dev/null
+
+      - name: Build service images
+        run: |
+          docker build -t boensity/timeline:ci services/timeline
+          docker build -t boensity/ingest:ci services/ingest
+          docker build -t boensity/sync:ci services/sync
+
+  # Nothing clinical, and no agent tooling, is allowed into the repository.
+  hygiene:
+    name: Repository hygiene
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No PDFs or agent files committed
+        run: |
+          offenders=$(git ls-files | grep -Ei '\.pdf$|^CLAUDE\.md$|^\.claude/|\.claude$' || true)
+          if [ -n "$offenders" ]; then
+            echo "::error::These files must not be committed:"
+            echo "$offenders"
+            exit 1
+          fi
+
+      - name: No em dashes in docs, code, or copy
+        run: |
+          # The copy rules for this project forbid them outright.
+          #
+          # The character is built with printf rather than written literally,
+          # otherwise this workflow file matches its own check and the job can
+          # never pass.
+          dash=$(printf '\xe2\x80\x94')
+          offenders=$(git grep -In -- "$dash" -- '*.md' '*.py' '*.ts' '*.tsx' '*.yml' '*.tf' '*.css' || true)
+          if [ -n "$offenders" ]; then
+            echo "::error::Em dashes found:"
+            echo "$offenders"
+            exit 1
+          fi
+
+      - name: No private package committed
+        run: |
+          # adherence_scorer and referral_router import these. They must stay
+          # out of the public repository.
+          offenders=$(git ls-files | grep -E 'boensity_sync_private' || true)
+          if [ -n "$offenders" ]; then
+            echo "::error::Private scoring package must not be committed:"
+            echo "$offenders"
+            exit 1
+          fi

@@ -1,0 +1,37 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "globalDependencies": [".env.example"],
+  "globalEnv": [
+    "NODE_ENV",
+    "NEXT_PUBLIC_TIMELINE_API_URL",
+    "NEXT_PUBLIC_INGEST_API_URL",
+    "NEXT_PUBLIC_SYNC_API_URL",
+    "FHIR_ISSUER",
+    "FHIR_CLIENT_ID",
+    "FHIR_REDIRECT_URI"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "lint": {
+      "dependsOn": ["^build"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "clean": {
+      "cache": false
+    }
+  }
+}

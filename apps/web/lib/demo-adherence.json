@@ -1,0 +1,247 @@
+{
+  "BN-4471": {
+    "score": {
+      "patient_id": "BN-4471",
+      "drug_class": "oral_bisphosphonate",
+      "proportion_days_covered": 0.0,
+      "medication_possession_ratio": 0.0,
+      "band": "lapsed",
+      "days_covered": 0,
+      "days_in_period": 365,
+      "period_start": "2025-03-02",
+      "period_end": "2026-03-01",
+      "fill_count": 0,
+      "gaps": [
+        {
+          "start": "2025-03-02",
+          "end": "2026-03-01",
+          "days": 365,
+          "is_material": true
+        }
+      ],
+      "longest_gap_days": 365,
+      "days_since_last_fill": 364,
+      "persistence_days": 0,
+      "risk_score": null,
+      "risk_score_available": false,
+      "interpretation": "No fills recorded in this period. Either the prescription was never collected or the pharmacy feed is not connected for this patient."
+    },
+    "interventions": [
+      {
+        "channel": "physician_alert",
+        "urgency": "high",
+        "message": "Patient has not filled in 364 days. Treatment has effectively stopped.",
+        "rationale": "Past 90 days without a fill, a reminder assumes an intention to continue that the record does not support. This needs a prescriber decision."
+      },
+      {
+        "channel": "pharmacist_call",
+        "urgency": "high",
+        "message": "Call to establish whether the patient stopped deliberately.",
+        "rationale": "Side effects and cost are the two most common reasons for silent discontinuation, and both have answers that a call can find."
+      }
+    ],
+    "referral": {
+      "patient_id": "BN-4471",
+      "status": "not_required",
+      "reason": "Coverage is 0 percent, low enough that the barrier is unlikely to be dispensing. This needs a prescriber review of tolerance and regimen before any pharmacy change.",
+      "candidates": [],
+      "selected_pharmacy_id": null,
+      "routing_available": false
+    }
+  },
+  "BN-2298": {
+    "score": {
+      "patient_id": "BN-2298",
+      "drug_class": "oral_bisphosphonate",
+      "proportion_days_covered": 0.7397,
+      "medication_possession_ratio": 0.7397,
+      "band": "partial",
+      "days_covered": 270,
+      "days_in_period": 365,
+      "period_start": "2025-03-02",
+      "period_end": "2026-03-01",
+      "fill_count": 9,
+      "gaps": [
+        {
+          "start": "2025-07-09",
+          "end": "2025-10-01",
+          "days": 85,
+          "is_material": true
+        }
+      ],
+      "longest_gap_days": 85,
+      "days_since_last_fill": 30,
+      "persistence_days": 355,
+      "risk_score": null,
+      "risk_score_available": false,
+      "interpretation": "Covered 74 percent of days, below the 80 percent threshold where anti-fracture benefit holds. Longest gap was 85 days."
+    },
+    "interventions": [
+      {
+        "channel": "sms",
+        "urgency": "low",
+        "message": "Refill reminder before the next dose is due.",
+        "rationale": "Coverage of 74 percent with no long gap is a timing problem, which is what reminders are good at."
+      },
+      {
+        "channel": "pharmacist_call",
+        "urgency": "medium",
+        "message": "A 85 day gap is worth a call, not just a text.",
+        "rationale": "Gaps this long are usually logistics: supply, transport, or a prescription that lapsed without anyone noticing."
+      }
+    ],
+    "referral": {
+      "patient_id": "BN-2298",
+      "status": "suggested",
+      "reason": "A 85 day gap on an oral agent with otherwise partial coverage points at refill logistics, which a pharmacy with synchronised refills and delivery can fix.",
+      "candidates": [
+        {
+          "pharmacy_id": "ph-201",
+          "pharmacy_name": "Meridian Specialty Pharmacy",
+          "distance_km": 3.4,
+          "supports_drug_class": true,
+          "accepts_new_referrals": true,
+          "match_score": null,
+          "match_score_available": false
+        },
+        {
+          "pharmacy_id": "ph-202",
+          "pharmacy_name": "Northgate Community Chemist",
+          "distance_km": 1.1,
+          "supports_drug_class": true,
+          "accepts_new_referrals": true,
+          "match_score": null,
+          "match_score_available": false
+        }
+      ],
+      "selected_pharmacy_id": null,
+      "routing_available": false
+    }
+  },
+  "BN-8810": {
+    "score": {
+      "patient_id": "BN-8810",
+      "drug_class": "supplement",
+      "proportion_days_covered": 0.9863,
+      "medication_possession_ratio": 0.9863,
+      "band": "adherent",
+      "days_covered": 360,
+      "days_in_period": 365,
+      "period_start": "2025-03-02",
+      "period_end": "2026-03-01",
+      "fill_count": 12,
+      "gaps": [],
+      "longest_gap_days": 4,
+      "days_since_last_fill": 30,
+      "persistence_days": 360,
+      "risk_score": null,
+      "risk_score_available": false,
+      "interpretation": "Covered 99 percent of days, at or above the 80 percent adherence threshold."
+    },
+    "interventions": [],
+    "referral": {
+      "patient_id": "BN-8810",
+      "status": "not_required",
+      "reason": "Adherent on an oral agent. No referral indicated.",
+      "candidates": [],
+      "selected_pharmacy_id": null,
+      "routing_available": false
+    }
+  },
+  "BN-6034": {
+    "score": {
+      "patient_id": "BN-6034",
+      "drug_class": "oral_bisphosphonate",
+      "proportion_days_covered": 0.9863,
+      "medication_possession_ratio": 0.9863,
+      "band": "adherent",
+      "days_covered": 360,
+      "days_in_period": 365,
+      "period_start": "2025-03-02",
+      "period_end": "2026-03-01",
+      "fill_count": 12,
+      "gaps": [],
+      "longest_gap_days": 4,
+      "days_since_last_fill": 30,
+      "persistence_days": 360,
+      "risk_score": null,
+      "risk_score_available": false,
+      "interpretation": "Covered 99 percent of days, at or above the 80 percent adherence threshold."
+    },
+    "interventions": [],
+    "referral": {
+      "patient_id": "BN-6034",
+      "status": "not_required",
+      "reason": "Adherent on an oral agent. No referral indicated.",
+      "candidates": [],
+      "selected_pharmacy_id": null,
+      "routing_available": false
+    }
+  },
+  "BN-1157": {
+    "score": {
+      "patient_id": "BN-1157",
+      "drug_class": "denosumab",
+      "proportion_days_covered": 0.4932,
+      "medication_possession_ratio": 0.4932,
+      "band": "lapsed",
+      "days_covered": 180,
+      "days_in_period": 365,
+      "period_start": "2025-03-02",
+      "period_end": "2026-03-01",
+      "fill_count": 1,
+      "gaps": [
+        {
+          "start": "2025-03-02",
+          "end": "2025-07-23",
+          "days": 144,
+          "is_material": true
+        },
+        {
+          "start": "2026-01-20",
+          "end": "2026-03-01",
+          "days": 41,
+          "is_material": true
+        }
+      ],
+      "longest_gap_days": 144,
+      "days_since_last_fill": 220,
+      "persistence_days": 360,
+      "risk_score": null,
+      "risk_score_available": false,
+      "interpretation": "No fill in 220 days. Treat as discontinued until confirmed otherwise. Restarting is a prescriber conversation, not a refill reminder."
+    },
+    "interventions": [
+      {
+        "channel": "physician_alert",
+        "urgency": "high",
+        "message": "Patient has not filled in 220 days. Treatment has effectively stopped.",
+        "rationale": "Past 90 days without a fill, a reminder assumes an intention to continue that the record does not support. This needs a prescriber decision."
+      },
+      {
+        "channel": "pharmacist_call",
+        "urgency": "high",
+        "message": "Call to establish whether the patient stopped deliberately.",
+        "rationale": "Side effects and cost are the two most common reasons for silent discontinuation, and both have answers that a call can find."
+      }
+    ],
+    "referral": {
+      "patient_id": "BN-1157",
+      "status": "suggested",
+      "reason": "denosumab requires scheduled administration and this patient is lapsed. A specialty pharmacy can take over scheduling and cold chain handling.",
+      "candidates": [
+        {
+          "pharmacy_id": "ph-201",
+          "pharmacy_name": "Meridian Specialty Pharmacy",
+          "distance_km": 3.4,
+          "supports_drug_class": true,
+          "accepts_new_referrals": true,
+          "match_score": null,
+          "match_score_available": false
+        }
+      ],
+      "selected_pharmacy_id": null,
+      "routing_available": false
+    }
+  }
+}

@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-inter: 'Inter', system-ui, sans-serif;
+    --font-dm-mono: 'DM Mono', ui-monospace, monospace;
+
+    --color-base: #0d1117;
+    --color-surface: #161b22;
+    --color-line: #2a313c;
+    --color-safe: #238636;
+    --color-warning: #d29922;
+    --color-danger: #e05c2a;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-base text-ink font-sans antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
+  }
+
+  /* Clinical values are tabular everywhere so a column of T-scores lines up on
+     the decimal. A ragged numeric column is harder to scan and this interface
+     exists to be scanned. */
+  .mono,
+  [data-mono] {
+    @apply font-mono;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  ::selection {
+    background: rgba(224, 92, 42, 0.3);
+  }
+
+  /* Keyboard focus has to survive on a dark surface. Clinicians work fast and
+     a lot of them work without a mouse. */
+  :focus-visible {
+    outline: 2px solid var(--color-danger);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* Squared panel, hairline border, no shadow. Depth is communicated by the
+     border and the surface shift, never by a drop shadow. */
+  .panel {
+    @apply border border-line bg-surface;
+  }
+
+  .panel-header {
+    @apply flex items-baseline justify-between border-b border-line px-4 py-3;
+  }
+
+  .label {
+    @apply text-[11px] uppercase tracking-[0.14em] text-ink-faint;
+  }
+
+  /* Squared, bordered, no gradient, no pill. */
+  .btn {
+    @apply inline-flex items-center justify-center border px-4 py-2 text-sm font-medium
+           transition-colors disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .btn-primary {
+    @apply btn border-danger bg-danger text-[#0D1117] hover:bg-[#F06A36];
+  }
+
+  .btn-secondary {
+    @apply btn border-line-strong bg-transparent text-ink hover:border-ink-muted;
+  }
+}
+
+@layer utilities {
+  /* The chart's dashed projection segment. Kept here so the dash rhythm is
+     identical between the D3 path and the legend swatch that explains it. */
+  .projection-dash {
+    stroke-dasharray: 5 4;
+  }
+}

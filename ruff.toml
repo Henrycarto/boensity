@@ -1,0 +1,49 @@
+# Shared lint and format configuration for the three Python services.
+
+line-length = 110
+target-version = "py312"
+
+exclude = [".venv", "venv", "__pycache__", ".pytest_cache"]
+
+[lint]
+select = [
+  "E",   # pycodestyle
+  "F",   # pyflakes
+  "I",   # import sorting
+  "UP",  # pyupgrade
+  "B",   # bugbear
+  "C4",  # comprehensions
+  "SIM", # simplify
+  "RUF",
+]
+
+ignore = [
+  # Long lines in the epidemiology tables would be less readable wrapped:
+  # one age band per line is the point of them.
+  "E501",
+  # Assigning an exception to a variable before raising reads worse in the
+  # narrow cases where it appears here.
+  "B904",
+  # FastAPI's whole dependency system is function calls in argument defaults:
+  # File(...), Form(...), Depends(...). This rule is correct in general and
+  # wrong for every FastAPI route ever written.
+  "B008",
+]
+
+[lint.per-file-ignores]
+# Globbed from the repository root, so the pattern has to reach into
+# services/<name>/tests as well.
+#
+# Tests reach into internals deliberately to check behaviour that has no
+# public surface, such as the injectable days-supply correction. Reference
+# tables held as class attributes are constants, not shared mutable state.
+"**/tests/**" = ["SLF001", "E402", "RUF012"]
+# Fixture generators import after a sys.path insert, which is the whole point.
+"scripts/*" = ["E402"]
+
+[lint.isort]
+known-first-party = ["app"]
+
+[format]
+quote-style = "double"
+indent-style = "space"

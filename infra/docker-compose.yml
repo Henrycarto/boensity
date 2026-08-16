@@ -1,0 +1,214 @@
+# Local development stack.
+#
+# Brings up everything: TimescaleDB, Redis, the three FastAPI services, a Celery
+# worker, MinIO standing in for S3, and the Next.js frontend.
+#
+#   cp .env.example .env
+#   docker compose -f infra/docker-compose.yml up
+#
+# Services start without Google Cloud Vision or pharmacy credentials. Ingest
+# handles text-native PDFs and rejects scanned ones with a clear message, and
+# Sync runs its fixture driver. Both report the degraded capability on /health
+# rather than pretending to be fully wired.
+
+name: boensity
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:2.17.2-pg16
+    container_name: boensity-timescaledb
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-boensity}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-boensity_local_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-boensity}
+    ports:
+      - '5432:5432'
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      # Runs once on an empty volume. Creates the hypertable, the indexes, and
+      # the continuous aggregate policies.
+      - ../services/timeline/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-boensity} -d ${POSTGRES_DB:-boensity}']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: boensity-redis
+    # Celery results are recomputable, so persistence buys nothing and an
+    # fsync on every job would slow the queue down for no benefit.
+    command: redis-server --save '' --appendonly no --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # Local S3. Raw PDF uploads land here instead of AWS during development.
+  minio:
+    image: minio/minio:RELEASE.2024-09-22T00-33-43Z
+    container_name: boensity-minio
+    command: server /data --console-address ':9001'
+    environment:
+      MINIO_ROOT_USER: ${AWS_ACCESS_KEY_ID:-boensity}
+      MINIO_ROOT_PASSWORD: ${AWS_SECRET_ACCESS_KEY:-boensity_local_dev}
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  # One-shot bucket creation. Without it the first upload fails on a missing
+  # bucket, which is a confusing first experience of the stack.
+  minio-init:
+    image: minio/mc:RELEASE.2024-09-16T17-43-14Z
+    container_name: boensity-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${AWS_ACCESS_KEY_ID:-boensity} ${AWS_SECRET_ACCESS_KEY:-boensity_local_dev} &&
+      mc mb --ignore-existing local/${S3_UPLOAD_BUCKET:-boensity-raw-uploads} &&
+      echo 'bucket ready'
+      "
+    restart: 'no'
+
+  # ---- Boensity Timeline ----
+  timeline:
+    build:
+      context: ../services/timeline
+      dockerfile: Dockerfile
+    container_name: boensity-timeline
+    environment:
+      TIMESCALE_DSN: postgresql://${POSTGRES_USER:-boensity}:${POSTGRES_PASSWORD:-boensity_local_dev}@timescaledb:5432/${POSTGRES_DB:-boensity}
+      CORS_ORIGINS: http://localhost:3000
+      LOG_LEVEL: INFO
+    ports:
+      - '8002:8002'
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---- Boensity Ingest ----
+  ingest:
+    build:
+      context: ../services/ingest
+      dockerfile: Dockerfile
+    container_name: boensity-ingest
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      TIMELINE_API_URL: http://timeline:8002
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_UPLOAD_BUCKET: ${S3_UPLOAD_BUCKET:-boensity-raw-uploads}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-boensity}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-boensity_local_dev}
+      AWS_REGION: ${AWS_REGION:-eu-central-1}
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcp-service-account.json
+      CORS_ORIGINS: http://localhost:3000
+    ports:
+      - '8001:8001'
+    volumes:
+      # Optional. Drop a service account key here to switch OCR on. Read only,
+      # and the path is gitignored.
+      - ../.secrets:/secrets:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # Same image as ingest, different entrypoint. Running OCR in a worker rather
+  # than the web process is the whole reason the queue exists: a Vision call on
+  # a dense scan takes seconds and must not hold an HTTP connection open.
+  ingest-worker:
+    build:
+      context: ../services/ingest
+      dockerfile: Dockerfile
+    container_name: boensity-ingest-worker
+    command: celery -A app.tasks.ocr_job.celery_app worker --loglevel=info --concurrency=2
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      TIMELINE_API_URL: http://timeline:8002
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_UPLOAD_BUCKET: ${S3_UPLOAD_BUCKET:-boensity-raw-uploads}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-boensity}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-boensity_local_dev}
+      AWS_REGION: ${AWS_REGION:-eu-central-1}
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcp-service-account.json
+    volumes:
+      - ../.secrets:/secrets:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # ---- Boensity Sync ----
+  sync:
+    build:
+      context: ../services/sync
+      dockerfile: Dockerfile
+    container_name: boensity-sync
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      TIMELINE_API_URL: http://timeline:8002
+      # Blank means the fixture driver. /health reports it as not live.
+      PHARMACY_API_BASE_URL: ${PHARMACY_API_BASE_URL:-}
+      PHARMACY_API_KEY: ${PHARMACY_API_KEY:-}
+      PHARMACY_NETWORK_ID: ${PHARMACY_NETWORK_ID:-}
+      CORS_ORIGINS: http://localhost:3000
+    ports:
+      - '8003:8003'
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---- Frontend ----
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Next inlines NEXT_PUBLIC_* at build time, so these are build args
+        # rather than runtime environment. Setting them only at runtime would
+        # leave the browser bundle pointing at the defaults.
+        NEXT_PUBLIC_TIMELINE_API_URL: http://localhost:8002
+        NEXT_PUBLIC_INGEST_API_URL: http://localhost:8001
+        NEXT_PUBLIC_SYNC_API_URL: http://localhost:8003
+    container_name: boensity-web
+    environment:
+      NODE_ENV: production
+      FHIR_ISSUER: ${FHIR_ISSUER:-https://launch.smarthealthit.org/v/r4/fhir}
+      FHIR_CLIENT_ID: ${FHIR_CLIENT_ID:-boensity-local}
+      FHIR_CLIENT_SECRET: ${FHIR_CLIENT_SECRET:-}
+      FHIR_REDIRECT_URI: ${FHIR_REDIRECT_URI:-http://localhost:3000/api/fhir/callback}
+    ports:
+      - '3000:3000'
+    depends_on:
+      - timeline
+      - ingest
+      - sync
+    restart: unless-stopped
+
+volumes:
+  timescale_data:
+  minio_data:
