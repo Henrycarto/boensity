@@ -83,7 +83,9 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
       - name: Scan image
-        uses: aquasecurity/trivy-action@0.24.0
+        # Tags on this action are v-prefixed. A bare version string does not
+        # resolve and fails the job at setup, before any step runs.
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ steps.ecr.outputs.registry }}/boensity/${{ matrix.service }}:${{ steps.meta.outputs.tag }}
           format: table
