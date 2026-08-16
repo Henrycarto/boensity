@@ -1,0 +1,7 @@
+# Nothing here is for a crawler. Every route behind the landing page renders
+# patient data, and next.config.js already sends X-Robots-Tag: noindex on all
+# of them. This is the second layer, for crawlers that read robots.txt before
+# they ever see a response header.
+
+User-agent: *
+Disallow: /
