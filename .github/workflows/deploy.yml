@@ -1,9 +1,12 @@
 name: Deploy
 
+# Manual trigger only.
+#
+# Deploying needs AWS OIDC federation and the ECS cluster that infra/terraform
+# provisions. Until that is applied, an automatic trigger on every push would
+# fail at the first AWS step and spend CI minutes doing it. Run this from the
+# Actions tab, or with: gh workflow run deploy.yml -f environment=staging
 on:
-  push:
-    branches: [main]
-    tags: ['v*']
   workflow_dispatch:
     inputs:
       environment:
