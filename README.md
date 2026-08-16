@@ -81,6 +81,9 @@ scripts             Demo fixture generators
 
 ## Documentation
 
+- [Handoff](docs/handoff.md). Start here if you are picking this up. Where the
+  risk is, which decisions look wrong and are not, and what breaks if you
+  change the wrong thing.
 - [Architecture](docs/architecture.md), including why TimescaleDB and how the
   services degrade when their dependencies are missing.
 - [FRAX methodology](docs/frax-methodology.md), including what this
