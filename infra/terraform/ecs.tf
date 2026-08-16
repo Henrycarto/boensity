@@ -9,12 +9,12 @@
 locals {
   services = {
     timeline = {
-      port           = 8002
-      path_pattern   = "/trajectory*"
-      cpu            = 1024
-      memory         = 2048
-      desired_count  = var.environment == "production" ? 2 : 1
-      health_path    = "/health"
+      port          = 8002
+      path_pattern  = "/trajectory*"
+      cpu           = 1024
+      memory        = 2048
+      desired_count = var.environment == "production" ? 2 : 1
+      health_path   = "/health"
     }
     ingest = {
       port          = 8001

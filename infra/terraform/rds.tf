@@ -109,9 +109,9 @@ resource "aws_db_instance" "timescale" {
   # Point in time recovery matters more here than elsewhere: a bad ingest run
   # can write wrong T-scores across many patients, and the fix is rewinding to
   # just before it rather than reconstructing by hand.
-  delete_automated_backups = false
-  deletion_protection      = var.environment == "production"
-  skip_final_snapshot      = var.environment != "production"
+  delete_automated_backups  = false
+  deletion_protection       = var.environment == "production"
+  skip_final_snapshot       = var.environment != "production"
   final_snapshot_identifier = var.environment == "production" ? "${local.name}-final-${formatdate("YYYYMMDDhhmmss", timestamp())}" : null
 
   performance_insights_enabled          = true
