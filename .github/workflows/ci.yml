@@ -146,11 +146,54 @@ jobs:
           cp .env.example .env
           docker compose -f infra/docker-compose.yml config > /dev/null
 
-      - name: Build service images
-        run: |
-          docker build -t boensity/timeline:ci services/timeline
-          docker build -t boensity/ingest:ci services/ingest
-          docker build -t boensity/sync:ci services/sync
+  # Builds every image the deploy workflow builds, on the same architecture,
+  # without pushing.
+  #
+  # This exists because the deploy workflow cannot be exercised without an AWS
+  # account, which left the Dockerfiles and the arm64 cross-build completely
+  # unproven. Those are the parts most likely to break, and they need no cloud
+  # credentials to test.
+  #
+  # arm64 specifically, not the runner's native amd64. The ECS task definitions
+  # run on Graviton, so an amd64-only build would pass here and still fail on
+  # the first real deploy if a dependency has no aarch64 wheel.
+  images:
+    name: Build ${{ matrix.service }} image
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [timeline, ingest, sync, web]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Emulation, so an amd64 runner can build arm64. Slower than a native
+      # build, and the layer cache below keeps repeat runs cheap.
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          # The web image needs the workspace packages it imports as source, so
+          # its context is the repository root. The services are self contained.
+          context: ${{ matrix.service == 'web' && '.' || format('services/{0}', matrix.service) }}
+          file: ${{ matrix.service == 'web' && 'apps/web/Dockerfile' || format('services/{0}/Dockerfile', matrix.service) }}
+          platforms: linux/arm64
+          push: false
+          # Next inlines NEXT_PUBLIC_* at build time, so the web build fails
+          # without them. Values are irrelevant here; only the build must work.
+          build-args: |
+            NEXT_PUBLIC_TIMELINE_API_URL=http://localhost:8002
+            NEXT_PUBLIC_INGEST_API_URL=http://localhost:8001
+            NEXT_PUBLIC_SYNC_API_URL=http://localhost:8003
+          cache-from: type=gha,scope=ci-${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=ci-${{ matrix.service }}
 
   # Nothing clinical, and no agent tooling, is allowed into the repository.
   hygiene:
