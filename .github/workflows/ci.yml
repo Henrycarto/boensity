@@ -146,19 +146,24 @@ jobs:
           cp .env.example .env
           docker compose -f infra/docker-compose.yml config > /dev/null
 
-  # Builds every image the deploy workflow builds, on the same architecture,
-  # without pushing.
+  # Builds every image the deploy workflow builds, without pushing.
   #
   # This exists because the deploy workflow cannot be exercised without an AWS
-  # account, which left the Dockerfiles and the arm64 cross-build completely
-  # unproven. Those are the parts most likely to break, and they need no cloud
-  # credentials to test.
+  # account, which left the Dockerfiles and the Graviton cross-build unproven.
+  # Neither needs cloud credentials to test.
   #
-  # arm64 specifically, not the runner's native amd64. The ECS task definitions
-  # run on Graviton, so an amd64-only build would pass here and still fail on
-  # the first real deploy if a dependency has no aarch64 wheel.
+  # Architecture depends on the event, which is a cost tradeoff:
+  #
+  #   push          linux/amd64, native on the runner, seconds
+  #   pull_request  linux/arm64, emulated, the architecture ECS actually runs
+  #
+  # Every push gets fast feedback that the Dockerfiles still build. Anything
+  # merging to main gets checked against real Graviton first, so a dependency
+  # with no aarch64 wheel is caught before it reaches a deploy. Emulated arm64
+  # is roughly six times slower than native on a cold cache, which is why it
+  # does not run on every push.
   images:
-    name: Build ${{ matrix.service }} image
+    name: Build ${{ matrix.service }} (${{ github.event_name == 'pull_request' && 'arm64' || 'amd64' }})
     runs-on: ubuntu-latest
 
     strategy:
@@ -166,12 +171,16 @@ jobs:
       matrix:
         service: [timeline, ingest, sync, web]
 
+    env:
+      PLATFORM: ${{ github.event_name == 'pull_request' && 'linux/arm64' || 'linux/amd64' }}
+
     steps:
       - uses: actions/checkout@v4
 
-      # Emulation, so an amd64 runner can build arm64. Slower than a native
-      # build, and the layer cache below keeps repeat runs cheap.
+      # Emulation, so an amd64 runner can build arm64. Skipped entirely on
+      # push, where the build is native and needs no emulation layer.
       - uses: docker/setup-qemu-action@v3
+        if: github.event_name == 'pull_request'
         with:
           platforms: arm64
 
@@ -184,7 +193,7 @@ jobs:
           # its context is the repository root. The services are self contained.
           context: ${{ matrix.service == 'web' && '.' || format('services/{0}', matrix.service) }}
           file: ${{ matrix.service == 'web' && 'apps/web/Dockerfile' || format('services/{0}/Dockerfile', matrix.service) }}
-          platforms: linux/arm64
+          platforms: ${{ env.PLATFORM }}
           push: false
           # Next inlines NEXT_PUBLIC_* at build time, so the web build fails
           # without them. Values are irrelevant here; only the build must work.
@@ -192,8 +201,11 @@ jobs:
             NEXT_PUBLIC_TIMELINE_API_URL=http://localhost:8002
             NEXT_PUBLIC_INGEST_API_URL=http://localhost:8001
             NEXT_PUBLIC_SYNC_API_URL=http://localhost:8003
-          cache-from: type=gha,scope=ci-${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=ci-${{ matrix.service }}
+          # Scoped per architecture. A shared scope would make the two
+          # platforms evict each other's layers on every alternating run,
+          # turning every build back into a cold one.
+          cache-from: type=gha,scope=ci-${{ matrix.service }}-${{ env.PLATFORM }}
+          cache-to: type=gha,mode=max,scope=ci-${{ matrix.service }}-${{ env.PLATFORM }}
 
   # Nothing clinical, and no agent tooling, is allowed into the repository.
   hygiene:
