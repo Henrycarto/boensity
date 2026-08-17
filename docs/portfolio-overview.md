@@ -135,40 +135,11 @@ allowed to be alarming only when the underlying measurement supports it.
 
 ## Revenue
 
-Two layers, and the second is the durable one.
-
-The first is physician SaaS. Endocrinology practices, orthopaedic groups, and
-hospital bone health units pay per seat or per department for the ingest
-pipeline and the trajectory monitoring. This is a clean sale with an obvious
-value story, and it has the economics every clinical SaaS has: a long
-procurement cycle, a per-seat ceiling, and a product that a well funded
-competitor could rebuild.
-
-The second is the pharmacy referral loop. When Sync identifies a patient who
-has lapsed on a specialty injectable, or a patient whose adherence gap points
-at refill logistics rather than tolerance, that patient is routed to a pharmacy
-equipped to handle their drug. Specialty pharmacies pay for qualified referrals
-because a patient on a six monthly injectable is a high value, long duration
-relationship, and acquiring them any other way is expensive and untargeted.
-
-The pharmacy layer is the moat for a reason that has nothing to do with the
-software. The physician product is defensible on execution alone, which is a
-temporary advantage. The pharmacy loop is defensible on position: it sits
-between two parties who both need something the other has and who currently
-have no channel between them. The physician has identified a patient who needs
-a specialty pharmacy. The pharmacy wants that patient. Neither side can see the
-other, and the signal that connects them, a specific patient's adherence gap on
-a specific drug at a specific moment, only exists because the trajectory
-platform is already in the physician's workflow.
-
-That produces the compounding effect. Every physician seat generates referral
-signal. Every pharmacy in the network makes the physician product more useful,
-because a referral only helps if there is somewhere to refer to. A competitor
-selling trajectory monitoring alone has to win on features. A competitor trying
-to enter the referral layer has to first build the physician-side product,
-reach enough clinical density to produce meaningful referral volume, and then
-sign the pharmacy agreements. The clinical product is the wedge. The referral
-network is the business.
+Two layers. Physician software sold to endocrinology practices, orthopaedic
+groups and hospital bone health units, and a pharmacy referral loop that routes
+a patient with an identified adherence gap to a pharmacy equipped to handle
+their drug. The clinical product is the wedge and the referral network is the
+durable half. The detail of that model is not published here.
 
 ## Public and private split
 
