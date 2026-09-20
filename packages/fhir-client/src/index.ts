@@ -21,6 +21,8 @@
  * verifier never leaves the server session.
  */
 
+export * from './issuers'
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -120,15 +122,80 @@ export function generateState(): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * Discovered documents are cached per issuer for an hour.
+ *
+ * A launch touches discovery three times (authorize, token exchange, refresh)
+ * and the endpoints do not change between them. The cache is per process, so
+ * a serverless cold start simply refetches, and `force` skips it for tests
+ * and diagnostics.
+ */
+const DISCOVERY_TTL_MS = 60 * 60 * 1000
+const discoveryCache = new Map<string, { config: SmartConfiguration; fetchedAt: number }>()
+
+export function clearSmartConfigurationCache(): void {
+  discoveryCache.clear()
+}
+
+function isAbsoluteHttpUrl(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' || url.protocol === 'http:'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Refuse a discovery document this client cannot use safely.
+ *
+ * PKCE with S256 is always sent. A server that advertises its supported
+ * challenge methods and leaves S256 out would silently fail the exchange, or
+ * worse accept `plain`, so it is rejected here rather than downgraded.
+ */
+export function assertSmartConfigurationUsable(
+  config: SmartConfiguration,
+  iss: string,
+): SmartConfiguration {
+  if (!isAbsoluteHttpUrl(config.authorization_endpoint)) {
+    throw new FhirError(`smart-configuration for ${iss} has no usable authorization_endpoint`)
+  }
+  if (!isAbsoluteHttpUrl(config.token_endpoint)) {
+    throw new FhirError(`smart-configuration for ${iss} has no usable token_endpoint`)
+  }
+  const methods = config.code_challenge_methods_supported
+  if (Array.isArray(methods) && !methods.includes('S256')) {
+    throw new FhirError(
+      `server at ${iss} does not support PKCE S256 (advertises ${methods.join(', ') || 'none'})`,
+    )
+  }
+  return config
+}
+
+/**
  * Find the authorization and token endpoints for a FHIR server.
  *
  * The well-known document is the modern route. The CapabilityStatement
  * extension is the older one, and enough production servers still only expose
  * that to make the fallback necessary rather than defensive.
  */
-export async function discoverSmartConfiguration(iss: string): Promise<SmartConfiguration> {
+export async function discoverSmartConfiguration(
+  iss: string,
+  options: { force?: boolean } = {},
+): Promise<SmartConfiguration> {
   const base = iss.replace(/\/+$/, '')
 
+  const cached = discoveryCache.get(base)
+  if (!options.force && cached && Date.now() - cached.fetchedAt < DISCOVERY_TTL_MS) {
+    return cached.config
+  }
+
+  const config = assertSmartConfigurationUsable(await fetchSmartConfiguration(base), base)
+  discoveryCache.set(base, { config, fetchedAt: Date.now() })
+  return config
+}
+
+async function fetchSmartConfiguration(base: string): Promise<SmartConfiguration> {
   const wellKnown = await fetch(`${base}/.well-known/smart-configuration`, {
     headers: { Accept: 'application/json' },
     cache: 'no-store',
@@ -398,7 +465,16 @@ export class FhirClient {
     if (!id) {
       throw new FhirError('no patient in the launch context and none supplied')
     }
-    return this.request<FhirPatient>(`Patient/${id}`)
+    return this.request<FhirPatient>(`Patient/${encodeURIComponent(id)}`)
+  }
+
+  /** One page of a search. Parameters are encoded here, so pass them raw. */
+  async search<T = FhirResource>(
+    resourceType: string,
+    params: Record<string, string>,
+  ): Promise<FhirBundle<T>> {
+    const query = new URLSearchParams(params).toString()
+    return this.request<FhirBundle<T>>(`${resourceType}?${query}`)
   }
 
   /**
@@ -467,6 +543,84 @@ export class FhirClient {
     }
 
     return { weightKg, heightCm }
+  }
+}
+
+export interface FhirResource {
+  resourceType: string
+  id?: string
+}
+
+// ---------------------------------------------------------------------------
+// Post-launch verification
+// ---------------------------------------------------------------------------
+
+/**
+ * What a verified launch looks like, with nothing in it that must not be
+ * logged. No token, no name, no birth date. The patient id is the launch
+ * context identifier and is included so a caller can decide for itself
+ * whether its output channel may carry it.
+ */
+export interface LaunchVerification {
+  patientId: string
+  patient: { status: number; resourceType: string; idMatches: boolean }
+  observations: {
+    status: number
+    resourceType: string
+    bundleType?: string
+    total?: number
+    entries: number
+    /** Distinct resource types in the entries, so a mixed bundle is visible. */
+    resourceTypes: string[]
+  }
+}
+
+/**
+ * Prove the token can read: one Patient read, one Observation search.
+ *
+ * This is the smallest pair of requests that shows the whole chain worked:
+ * the token is accepted, the patient scope covers the launch context, and
+ * the search parameters are understood. An empty Observation bundle is a pass,
+ * because sandbox patients routinely have no data in a given category, and
+ * the point is the 200, not the contents.
+ */
+export async function verifyLaunchAccess(
+  client: FhirClient,
+  options: { category?: string; count?: number } = {},
+): Promise<LaunchVerification> {
+  const patientId = client.patientId
+  if (!patientId) {
+    throw new FhirError('token response carried no patient context, nothing to verify against')
+  }
+
+  const patient = await client.getPatient(patientId)
+  if (patient.resourceType !== 'Patient') {
+    throw new FhirError(`Patient read returned a ${patient.resourceType}, expected Patient`)
+  }
+
+  const bundle = await client.search<FhirResource>('Observation', {
+    patient: patientId,
+    category: options.category ?? 'vital-signs',
+    _count: String(options.count ?? 5),
+  })
+  if (bundle.resourceType !== 'Bundle') {
+    throw new FhirError(`Observation search returned a ${bundle.resourceType}, expected Bundle`)
+  }
+
+  const entries = bundle.entry ?? []
+  const resourceTypes = Array.from(new Set(entries.map((entry) => entry.resource.resourceType))).sort()
+
+  return {
+    patientId,
+    patient: { status: 200, resourceType: patient.resourceType, idMatches: patient.id === patientId },
+    observations: {
+      status: 200,
+      resourceType: bundle.resourceType,
+      bundleType: bundle.type,
+      total: bundle.total,
+      entries: entries.length,
+      resourceTypes,
+    },
   }
 }
 

@@ -15,6 +15,7 @@ import 'server-only'
 import { cookies } from 'next/headers'
 import {
   FhirClient,
+  FhirError,
   ageFromBirthDate,
   buildAuthorizeUrl,
   deriveCodeChallenge,
@@ -22,9 +23,13 @@ import {
   exchangeCodeForToken,
   generateCodeVerifier,
   generateState,
+  normaliseIss,
   refreshAccessToken,
+  resolveSmartIssuerProfile,
   sessionFromToken,
+  verifyLaunchAccess,
   type FhirObservation,
+  type SmartIssuerProfile,
   type SmartSession,
 } from '@boensity/fhir-client'
 import type { Manufacturer, ScanObservation, SkeletalSite } from '@boensity/shared-types'
@@ -37,25 +42,37 @@ const SESSION_COOKIE = 'boensity_smart_session'
 // and short enough that an abandoned launch does not leave a usable verifier.
 const LAUNCH_TTL_SECONDS = 600
 
-export function fhirConfig() {
-  return {
-    clientId: process.env.FHIR_CLIENT_ID ?? 'boensity-local',
-    clientSecret: process.env.FHIR_CLIENT_SECRET || undefined,
-    redirectUri: process.env.FHIR_REDIRECT_URI ?? 'http://localhost:3000/api/fhir/callback',
-    scope:
-      process.env.FHIR_SCOPES ??
-      'launch openid fhirUser offline_access patient/Patient.read patient/Observation.read',
-    defaultIss: process.env.FHIR_ISSUER ?? 'https://launch.smarthealthit.org/v/r4/fhir',
-  }
+/**
+ * The issuer profile selected by SMART_ISSUER, read on every call so a change
+ * in the environment does not need a restart in development. `defaultIss` is
+ * kept as an alias of the profile's base URL for the login screen.
+ */
+export function fhirConfig(): SmartIssuerProfile & { defaultIss: string } {
+  const profile = resolveSmartIssuerProfile(process.env)
+  return { ...profile, defaultIss: profile.iss }
 }
 
 interface PendingLaunch {
   iss: string
   state: string
   codeVerifier: string
+  /** Whether an EHR supplied a launch token, for the verification log. */
+  ehrLaunch: boolean
 }
 
 const secureCookies = process.env.NODE_ENV === 'production'
+
+/**
+ * Structured, single-line log entries for the launch flow.
+ *
+ * Nothing that passes through here may carry a token, a code, a verifier, or
+ * patient data. Callers pass counts, statuses, and hostnames.
+ */
+function logSmart(level: 'info' | 'warn', event: string, fields: Record<string, unknown>): void {
+  const line = JSON.stringify({ ts: new Date().toISOString(), level, event, ...fields })
+  if (level === 'warn') console.warn(line)
+  else console.info(line)
+}
 
 /**
  * Begin a launch and return the URL to send the browser to.
@@ -70,14 +87,23 @@ export async function beginSmartLaunch(options: {
   launch?: string
 }): Promise<string> {
   const config = fhirConfig()
-  const iss = options.iss ?? config.defaultIss
+
+  if (config.missing.length > 0) {
+    throw new Error(
+      `SMART_ISSUER=${config.name} needs ${config.missing.join(', ')} in the environment`,
+    )
+  }
+
+  // aud must equal the FHIR base exactly. A trailing slash typed into the
+  // login form would otherwise reach the authorization server unchanged.
+  const iss = normaliseIss(options.iss ?? config.defaultIss)
 
   const smartConfig = await discoverSmartConfiguration(iss)
   const codeVerifier = generateCodeVerifier()
   const codeChallenge = await deriveCodeChallenge(codeVerifier)
   const state = generateState()
 
-  const pending: PendingLaunch = { iss, state, codeVerifier }
+  const pending: PendingLaunch = { iss, state, codeVerifier, ehrLaunch: Boolean(options.launch) }
 
   cookies().set(LAUNCH_COOKIE, JSON.stringify(pending), {
     httpOnly: true,
@@ -85,6 +111,13 @@ export async function beginSmartLaunch(options: {
     sameSite: 'lax',
     path: '/',
     maxAge: LAUNCH_TTL_SECONDS,
+  })
+
+  logSmart('info', 'smart.launch.started', {
+    profile: config.name,
+    issuer: new URL(iss).host,
+    mode: pending.ehrLaunch ? 'ehr' : 'standalone',
+    scopeCount: config.scope.split(' ').length,
   })
 
   return buildAuthorizeUrl(smartConfig, {
@@ -142,7 +175,57 @@ export async function completeSmartLaunch(options: {
     maxAge: token.expires_in,
   })
 
+  logSmart('info', 'smart.token.exchanged', {
+    profile: config.name,
+    issuer: new URL(pending.iss).host,
+    mode: pending.ehrLaunch ? 'ehr' : 'standalone',
+    tokenType: token.token_type,
+    expiresIn: token.expires_in,
+    patientInContext: Boolean(token.patient),
+    idToken: Boolean(token.id_token),
+    refreshToken: Boolean(token.refresh_token),
+    grantedScopeCount: token.scope ? token.scope.split(' ').length : 0,
+  })
+
+  await reportLaunchAccess(session, config)
+
   return session
+}
+
+/**
+ * One Patient read and one Observation search straight after the exchange,
+ * logged at INFO. This is the evidence that the token works against this
+ * issuer, recorded where an operator can find it. A failure is logged and
+ * does not tear the session down: the patient screen makes its own requests
+ * and surfaces the real error to the clinician.
+ */
+async function reportLaunchAccess(session: SmartSession, config: SmartIssuerProfile): Promise<void> {
+  const base = { profile: config.name, issuer: new URL(session.iss).host }
+
+  if (!session.patientId) {
+    logSmart('warn', 'smart.launch.no_patient_context', base)
+    return
+  }
+
+  try {
+    const verified = await verifyLaunchAccess(new FhirClient(session))
+    logSmart('info', 'smart.launch.verified', {
+      ...base,
+      patientRead: verified.patient.status,
+      patientIdMatches: verified.patient.idMatches,
+      observationSearch: verified.observations.status,
+      observationBundleType: verified.observations.bundleType,
+      observationEntries: verified.observations.entries,
+      observationTotal: verified.observations.total,
+      observationResourceTypes: verified.observations.resourceTypes,
+    })
+  } catch (error) {
+    logSmart('warn', 'smart.launch.verification_failed', {
+      ...base,
+      status: error instanceof FhirError ? error.status : undefined,
+      message: error instanceof Error ? error.message : String(error),
+    })
+  }
 }
 
 export function readSmartSession(): SmartSession | null {

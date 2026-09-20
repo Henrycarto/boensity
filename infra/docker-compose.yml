@@ -201,6 +201,14 @@ services:
       FHIR_CLIENT_ID: ${FHIR_CLIENT_ID:-boensity-local}
       FHIR_CLIENT_SECRET: ${FHIR_CLIENT_SECRET:-}
       FHIR_REDIRECT_URI: ${FHIR_REDIRECT_URI:-http://localhost:3000/api/fhir/callback}
+      FHIR_SCOPES: ${FHIR_SCOPES:-}
+      # Epic sandbox profile, active when SMART_ISSUER=epic. See README.
+      SMART_ISSUER: ${SMART_ISSUER:-generic}
+      EPIC_CLIENT_ID: ${EPIC_CLIENT_ID:-}
+      EPIC_CLIENT_SECRET: ${EPIC_CLIENT_SECRET:-}
+      EPIC_REDIRECT_URI: ${EPIC_REDIRECT_URI:-http://localhost:3000/api/fhir/callback}
+      EPIC_FHIR_BASE_URL: ${EPIC_FHIR_BASE_URL:-}
+      EPIC_SCOPES: ${EPIC_SCOPES:-}
     ports:
       - '3000:3000'
     depends_on:

@@ -79,7 +79,22 @@ export default function LoginPage({
         <section className="panel mt-8">
           <div className="panel-header">
             <h2 className="label">Standalone launch</h2>
+            <span className="text-[10px] uppercase tracking-[0.1em] text-ink-faint">{config.label}</span>
           </div>
+
+          {config.missing.length > 0 && (
+            <div
+              className="mx-4 mt-4 border px-4 py-3 text-xs"
+              style={{
+                borderColor: '#E05C2A',
+                color: '#E05C2A',
+                backgroundColor: 'rgba(224,92,42,0.06)',
+              }}
+            >
+              SMART_ISSUER={config.name} is selected but {config.missing.join(', ')} is not set.
+              The launch will refuse to start until it is.
+            </div>
+          )}
 
           {/* GET to the launch route, which performs discovery and PKCE
               server-side and redirects to the authorization server. The code
@@ -98,8 +113,9 @@ export default function LoginPage({
             />
 
             <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">
-              The default points at the public SMART sandbox, which is the fastest way to see the
-              full flow without hospital credentials.
+              {config.name === 'epic'
+                ? 'The default points at the Epic FHIR R4 sandbox. Sign in with the sandbox test credentials Epic lists at open.epic.com and pick a test patient.'
+                : 'The default points at the public SMART sandbox, which is the fastest way to see the full flow without hospital credentials.'}
             </p>
 
             <button

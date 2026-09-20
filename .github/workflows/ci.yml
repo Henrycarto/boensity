@@ -75,6 +75,11 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # The SMART client's unit tests. The Epic sandbox integration test in
+      # the same suite skips itself here because EPIC_CLIENT_ID is not set.
+      - name: Test
+        run: npm test
+
       - name: Build
         run: npm run build
 

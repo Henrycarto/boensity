@@ -7,10 +7,12 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "echo \"no lint configured\"",
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
     "build": "echo \"consumed as source via transpilePackages\""
   },
   "devDependencies": {
     "@types/node": "^22.7.4",
+    "tsx": "^4.23.15",
     "typescript": "^5.6.2"
   }
 }

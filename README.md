@@ -63,8 +63,114 @@ python -m venv .venv && .venv/bin/pip install -r requirements.txt
 cd services/timeline && .venv/bin/pytest      # 81 tests
 cd services/ingest   && .venv/bin/pytest      # 38 tests
 cd services/sync     && .venv/bin/pytest      # 36 tests
+npm test                                      # 23 SMART client tests, plus 4 against Epic when EPIC_CLIENT_ID is set
 npm run typecheck && npm run lint && npm run build
 ```
+
+## Epic FHIR sandbox
+
+The SMART on FHIR launch is exercised against two issuers. The default is the
+public SMART reference sandbox, which accepts any client id. The second is
+Epic's public FHIR R4 sandbox, which needs a registered app and is selected
+with `SMART_ISSUER=epic`. The protocol code is the same for both: endpoints
+are discovered from the server's `.well-known/smart-configuration` document
+at launch time, cached for an hour, and never hardcoded.
+
+### Register the app
+
+1. Create a developer account at [open.epic.com](https://open.epic.com) and
+   build a new app of type **Clinicians** (a web app launched by a user).
+2. Leave it a public client. Boensity keeps the PKCE verifier and the token
+   server side, but the browser starts the redirect, so there is no secret
+   to hold. A confidential registration also works if `EPIC_CLIENT_SECRET` is
+   set, though that path has not been exercised against Epic.
+3. Declare exactly these scopes. Epic rejects an authorize request whose
+   scopes do not match the registration with a bare 400, so the list in
+   `packages/fhir-client/src/issuers.ts` and the registration must be edited
+   together:
+
+   ```
+   launch
+   launch/patient
+   openid
+   fhirUser
+   patient/Patient.read
+   patient/Observation.read
+   offline_access
+   ```
+
+4. Register the redirect URI. For local work that is
+   `http://localhost:3000/api/fhir/callback`, which both the web app and the
+   smoke script answer on.
+5. Copy the **non-production** client id. It goes in the environment, never
+   in the repository.
+
+### Environment
+
+| Variable             | Purpose                                                                 |
+| -------------------- | ----------------------------------------------------------------------- |
+| `SMART_ISSUER`       | `generic` (default) or `epic`.                                          |
+| `EPIC_CLIENT_ID`     | Non-production client id from the registration. Required for `epic`.   |
+| `EPIC_REDIRECT_URI`  | The registered redirect. Defaults to the localhost callback above.      |
+| `EPIC_FHIR_BASE_URL` | Defaults to `https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4`. |
+| `EPIC_SCOPES`        | Overrides the declared scope list for a registration that differs.      |
+| `EPIC_CLIENT_SECRET` | Only for a confidential registration. Leave unset for a public client.  |
+
+`.env.example` lists them. The `FHIR_*` variables keep driving the generic
+profile and are ignored while `SMART_ISSUER=epic`.
+
+### Run the smoke script
+
+The script performs the standalone launch end to end with the same client
+code the web app uses: discovery, the authorize redirect, the callback, the
+PKCE token exchange, then `GET Patient/{id}` and
+`GET Observation?patient={id}&category=vital-signs&_count=5`. Stop the Next
+dev server first if it is holding port 3000.
+
+```bash
+export EPIC_CLIENT_ID=...            # PowerShell: $env:EPIC_CLIENT_ID="..."
+npx tsx scripts/epic_smoke.ts
+```
+
+It prints the authorize URL. Open it, sign in with the sandbox test
+credentials Epic lists under its sandbox test data, and choose a test
+patient. The script receives the code, exchanges it, performs the two reads,
+and prints a redacted summary: patient id, resource types, entry counts,
+granted scopes. Tokens, codes and the verifier are never printed. It exits 0
+only when both reads return 200, 1 on any failure, and 2 when the
+configuration is incomplete.
+
+### Run the integration test
+
+```bash
+EPIC_CLIENT_ID=... npm test --workspace packages/fhir-client
+```
+
+The `epic sandbox` suite fetches Epic's live `smart-configuration`, checks
+that it carries both endpoints, PKCE `S256` and a launch capability, and
+asserts the authorize URL the client builds for it carries every parameter
+Epic checks with `aud` equal to the FHIR base. It skips itself when
+`EPIC_CLIENT_ID` is unset, which is how it behaves in CI. It cannot sign in,
+so the token exchange and the two reads are only proven by the smoke script.
+
+### Known sandbox limitations
+
+- Epic's test patients carry no DEXA reports and no bone density
+  Observations. The launch is tested against Epic; ingest and the trajectory
+  engine are not, and cannot be, until a site with real DXA data is
+  connected. The verification search uses `category=vital-signs` for that
+  reason, and an empty Bundle is a pass.
+- Standalone launch shows Epic's own login and patient selection. EHR launch
+  arrives with `iss` and `launch` from inside a chart, and the patient comes
+  back in the token without a picker. Both build the same authorize request;
+  only the `launch` parameter differs. The smoke script covers standalone,
+  because an EHR launch can only be started from Epic's launch tooling.
+- If Epic answers the authorize request with `invalid_scope` or a bare 400,
+  the scope list is the first thing to check against the registration.
+  `EPIC_SCOPES` overrides the default without a code change.
+- The `aud` parameter must be byte-identical to the FHIR base. A trailing
+  slash typed into the login form is stripped before the request for that
+  reason.
 
 ## Layout
 
@@ -76,7 +182,7 @@ services/sync       Adherence and pharmacy referral
 packages            Shared types and the SMART on FHIR client
 infra               docker-compose and Terraform
 docs                Architecture and methodology
-scripts             Demo fixture generators
+scripts             Demo fixture generators and the Epic sandbox smoke script
 ```
 
 ## Documentation
@@ -115,7 +221,9 @@ documented and surfaced in the API.
 - Hologic and GE Lunar adapters, tested end to end from real PDF bytes.
 - The `{data, error, meta}` contract, preserved through every error path.
 - SMART on FHIR OAuth 2.0 with PKCE, both EHR and standalone launch, tokens in
-  httpOnly cookies.
+  httpOnly cookies. The Epic FHIR sandbox section above describes how the
+  launch, token exchange, Patient read and Observation search are verified
+  against Epic's R4 sandbox.
 - The FractureRiskChart, RiskScoreBadge, AdherencePanel, and the ingest review
   screen.
 
