@@ -34,6 +34,13 @@ from app.schemas import (
 
 OUTPUT = ROOT / "apps" / "web" / "lib" / "demo-data.json"
 
+# Fixed anchor so the fixture never drifts. The stale scan alert measures the
+# gap between the latest scan and "today"; left to the wall clock, CI failed
+# on its own once a demo patient crossed the three year threshold. The date
+# is the one the committed fixtures were last generated on, so anchoring
+# changed nothing in the demo. generate_sync_fixtures.py anchors the same way.
+ANCHOR = date(2026, 8, 18)
+
 
 def scan(
     year: int,
@@ -193,6 +200,7 @@ def build_patient(entry: dict) -> dict:
         scans=scans,
         current_t_score=latest.t_score,
         frax=frax,
+        today=ANCHOR,
     )
 
     span = (
