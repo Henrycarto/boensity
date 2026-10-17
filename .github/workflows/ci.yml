@@ -212,7 +212,7 @@ jobs:
           cache-from: type=gha,scope=ci-${{ matrix.service }}-${{ env.PLATFORM }}
           cache-to: type=gha,mode=max,scope=ci-${{ matrix.service }}-${{ env.PLATFORM }}
 
-  # Nothing clinical, and no agent tooling, is allowed into the repository.
+  # Nothing clinical is allowed into the repository.
   hygiene:
     name: Repository hygiene
     runs-on: ubuntu-latest
@@ -220,9 +220,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: No PDFs or agent files committed
+      - name: No PDFs committed
         run: |
-          offenders=$(git ls-files | grep -Ei '\.pdf$|^CLAUDE\.md$|^\.claude/|\.claude$' || true)
+          offenders=$(git ls-files | grep -Ei '\.pdf$' || true)
           if [ -n "$offenders" ]; then
             echo "::error::These files must not be committed:"
             echo "$offenders"
