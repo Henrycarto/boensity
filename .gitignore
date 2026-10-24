@@ -47,3 +47,6 @@ Thumbs.db
 
 .vercel
 .env*
+
+# Private interview notes
+INTERVIEW_NOTES.md
